@@ -2,6 +2,7 @@
 https://docs.openvino.ai/latest/notebooks/220-yolov5-accuracy-check-and-quantization-with-output.html
 """
 import sys
+import os
 import torch
 import numpy as np
 from addict import Dict
@@ -26,9 +27,9 @@ from openvino.tools.pot.pipeline.initializer import create_pipeline
 from openvino.tools.pot.utils.logger import init_logger, get_logger
 
 
-MODEL_NAME = "yolov5l"
+MODEL_NAME = "yolov5s"
 MODEL_PATH = f"../onnx_models/{MODEL_NAME}_openvino_model"
-assert MODEL_NAME in ["yolov5s", "yolov5m", "yolov5l"]
+assert MODEL_NAME in ["yolov5n", "yolov5s", "yolov5m", "yolov5l", "yolov5x"]
 fp32_path = f"{MODEL_PATH}/FP32/{MODEL_NAME}"
 fp16_path = f"{MODEL_PATH}/FP16/{MODEL_NAME}"
 IMAGE_SIZE = 640
@@ -66,6 +67,7 @@ class YOLOv5DataLoader(DataLoader):
         dataloader = create_dataloader(
             self._data_source["val"],
             imgsz=self._imgsz,
+            to_rgb=False,   # image should be BGR mode, because we let openvino.mo do the `reverse_input_channels``
             batch_size=self._batch_size,
             stride=self._stride,
             single_cls=self._single_cls,
@@ -85,7 +87,9 @@ class YOLOv5DataLoader(DataLoader):
         im, target, path, shape = batch_data
 
         im = im.float()
-        im /= 255
+        
+        # scale should be processed in openvino.mo step
+        # im /= 255
         nb, _, height, width = im.shape
         img = im.cpu().detach().numpy()
         target = target.cpu().detach().numpy()
@@ -186,7 +190,9 @@ class COCOMetric(Metric):
             self._device
         )  # to pixels
         lb = []
-        out = output[0]
+
+        out = np.concatenate(output, axis=1)
+        # out = output[0]
         out = torch.Tensor(out).to(self._device)
         out = non_max_suppression(
             out,
@@ -271,6 +277,7 @@ def get_config():
     """
     config = dict()
     data_yaml = check_yaml("../data/coco128.yaml")
+    # data_yaml = check_yaml("../data/coco-single.yaml")
     data = check_dataset(data_yaml)
 
     model_fp32_config = Dict(
@@ -292,7 +299,7 @@ def get_config():
     model_int8_config = Dict(
         {
             "model_name": f"{MODEL_NAME}_int8",
-            "save_path": f"{MODEL_PATH}/INT8_openvino_model/",
+            "save_path": f"{MODEL_PATH}/FP16-INT8/",
         }
     )
 

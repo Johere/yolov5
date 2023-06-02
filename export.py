@@ -130,7 +130,7 @@ def export_torchscript(model, im, file, optimize, prefix=colorstr('TorchScript:'
 
 
 @try_export
-def export_onnx(model, im, file, opset, dynamic, simplify, prefix=colorstr('ONNX:')):
+def export_onnx(model, im, file, opset, dynamic, simplify, prefix=colorstr('ONNX:'), output_names=None):
     # YOLOv5 ONNX export
     check_requirements('onnx')
     import onnx
@@ -138,7 +138,8 @@ def export_onnx(model, im, file, opset, dynamic, simplify, prefix=colorstr('ONNX
     LOGGER.info(f'\n{prefix} starting export with onnx {onnx.__version__}...')
     f = file.with_suffix('.onnx')
 
-    output_names = ['output0', 'output1'] if isinstance(model, SegmentationModel) else ['output0']
+    if output_names is None:
+        output_names = ['output0', 'output1'] if isinstance(model, SegmentationModel) else ['output0']
     if dynamic:
         dynamic = {'images': {0: 'batch', 2: 'height', 3: 'width'}}  # shape(1,3,640,640)
         if isinstance(model, SegmentationModel):
@@ -549,9 +550,22 @@ def run(
         y = model(im)  # dry runs
     if half and not coreml:
         im, model = im.half(), model.half()  # to FP16
-    shape = tuple((y[0] if isinstance(y, tuple) else y).shape)  # model output shape
+
+    output_shapes = []
+    output_names = []
+    outputs = y[0] if isinstance(y, tuple) else y
+    if isinstance(outputs, tuple) or isinstance(outputs, list):
+        # multiple layers
+        pass
+    else:
+        outputs = [outputs]
+    for idx, out in enumerate(outputs):
+        shape = out.shape  # model output shape
+        output_shapes.append(shape)
+        output_names.append(f"output{idx}")
+    # shape = tuple((y[0] if isinstance(y, tuple) else y).shape)  # model output shape
     metadata = {'stride': int(max(model.stride)), 'names': model.names}  # model metadata
-    LOGGER.info(f"\n{colorstr('PyTorch:')} starting from {file} with output shape {shape} ({file_size(file):.1f} MB)")
+    LOGGER.info(f"\n{colorstr('PyTorch:')} starting from {file} with output shape {output_shapes} ({file_size(file):.1f} MB)")
 
     # Exports
     f = [''] * len(fmts)  # exported filenames
@@ -561,7 +575,7 @@ def run(
     if engine:  # TensorRT required before ONNX
         f[1], _ = export_engine(model, im, file, half, dynamic, simplify, workspace, verbose)
     if onnx or xml:  # OpenVINO requires ONNX
-        f[2], _ = export_onnx(model, im, file, opset, dynamic, simplify)
+        f[2], _ = export_onnx(model, im, file, opset, dynamic, simplify, output_names=output_names)
     if xml:  # OpenVINO
         f[3], _ = export_openvino(file, metadata, half)
     if coreml:  # CoreML
